@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Office.Interop.Excel;
 using Objets100cLib;
-
+using System.Threading.Tasks;
 namespace Excel_to_Ecriture
 {
     public partial class Form1 : Form
@@ -19,9 +19,10 @@ namespace Excel_to_Ecriture
         private System.Windows.Forms.Label label2;
         private System.Windows.Forms.TextBox textBox2, baseComptable, 
             utilisateurTextBox,txtPassword;
+        private System.Windows.Forms.ProgressBar loadingBar;
          private System.Windows.Forms.Button button1, btnValider;
         private OpenFileDialog openFileDialog1,openFileDialog2;
-        string filePath;
+        string filePath,filePath2;
         Configuration config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
 
         private bool isHandlingSelection = false;
@@ -37,13 +38,13 @@ namespace Excel_to_Ecriture
         List<string> selectedValues = new List<string>();
         Dictionary<string, string> indices = new Dictionary<string, string>();
         int erreurline;
-
+        bool success = true;
 
         List<string> options = new List<string>
         {
             "Journal", "N° Pièce", "Inutilisé", "Date de pièce",
             "N° compte générale", "N° compte tiers", "Libellé écriture",
-            "Référence", "Montant débit", "Montant Crédit"
+            "Référence", "Montant débit", "Montant Crédit",
         };
         List<string> columns = new List<string>
         {
@@ -56,12 +57,14 @@ namespace Excel_to_Ecriture
         List<ComboBox> comboBoxes = new List<ComboBox>();
         public Form1()
         {
+
             InitializeComponent(); // Initialize components first
             InitializeComponents();
         }
         private void InitializeComponents()
         {
-
+            this.Icon = new System.Drawing.Icon("icon.ico");
+            this.Text = "Importation Excel -> Sage";
             this.ClientSize = new System.Drawing.Size(1250, 700);
             string excelFile = ConfigurationManager.AppSettings["excelFile"];
              filePath = excelFile;
@@ -116,7 +119,15 @@ namespace Excel_to_Ecriture
             logLabel.AutoSize = false;
             Controls.Add(logLabel);
 
-            // Open File Dialog
+            loadingBar = new ProgressBar();
+            loadingBar.Location = new System.Drawing.Point(20, 330); // Below the logLabel
+            loadingBar.Size = new Size(390, 30);
+            loadingBar.Style = ProgressBarStyle.Marquee;
+            loadingBar.MarqueeAnimationSpeed = 50; // Speed of the marquee animation
+            loadingBar.Visible = false; // Make it invisible initially
+            // Add the loading bar to the form
+            Controls.Add(loadingBar);
+             // Open File Dialog
             openFileDialog1 = new OpenFileDialog();
             openFileDialog1.Filter = "Excel Files|*.xlsx;*.xls";
             openFileDialog1.Title = "Choisir un fichier Excel";
@@ -209,7 +220,7 @@ namespace Excel_to_Ecriture
         private void InitializeTabControl()
         {
             System.Windows.Forms.TabControl tabControl = new System.Windows.Forms.TabControl();
-            tabControl.Location = new System.Drawing.Point(20, 350);
+            tabControl.Location = new System.Drawing.Point(20, 380);
             tabControl.Size = new System.Drawing.Size(1200, 220);
 
             TabPage tabPage = new TabPage();
@@ -225,7 +236,7 @@ namespace Excel_to_Ecriture
             int comboBoxX = 150;
             int comboBoxY = 20;
             int columnsCount = 0;
-
+            
 
             for (int i = 0; i < columns.Count; i++)
             {
@@ -340,6 +351,18 @@ namespace Excel_to_Ecriture
             MessageBox.Show("La configuration bien enregistré");
         }
 
+        private void UpdateProgressBar(object sender, EventArgs e)
+        {
+            if (loadingBar.Value < loadingBar.Maximum)
+            {
+                loadingBar.Value += 1; // Increment the progress bar value
+            }
+            else
+            {
+                loadingBar.Value = loadingBar.Minimum; // Reset the progress bar value
+            }
+        }
+
         private void ComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
             ComboBox changedComboBox = sender as ComboBox;
@@ -347,6 +370,7 @@ namespace Excel_to_Ecriture
 
             // Get the new selection
             string newSelection = changedComboBox.SelectedItem?.ToString();
+
             if (!string.IsNullOrEmpty(newSelection))
             {
                 // Remove the new selection from all other ComboBoxes
@@ -362,13 +386,10 @@ namespace Excel_to_Ecriture
             // Get the previous selection if it exists
             if (previousSelections.TryGetValue(changedComboBox, out string previousSelection))
             {
-                // Show the previous selection in a MessageBox
-                //MessageBox.Show(previousSelection);
-
                 // Add the previous selection back to all ComboBoxes
                 foreach (var comboBox in comboBoxes)
                 {
-                    if (comboBox != changedComboBox && previousSelection != "Inutilisé" && !comboBox.Items.Contains(previousSelection))
+                    if (comboBox != changedComboBox  && previousSelection != "Inutilisé" && !comboBox.Items.Contains(previousSelection))
                     {
                         comboBox.Items.Add(previousSelection);
                     }
@@ -376,12 +397,20 @@ namespace Excel_to_Ecriture
             }
             else
             {
-                // Handle case where previous selection doesn't exist (optional)
-               // MessageBox.Show("Previous selection not found for this ComboBox.");
+                // Optional: Handle case where previous selection doesn't exist
+                // This could be useful for logging or debugging
+                // MessageBox.Show("Previous selection not found for this ComboBox.");
             }
 
             // Update the previous selection for the changed ComboBox
-            previousSelections[changedComboBox] = newSelection;
+            if (newSelection != "Inutilisé")
+            {
+                previousSelections[changedComboBox] = newSelection;
+            }
+            else
+            {
+                previousSelections.Remove(changedComboBox);
+            }
         }
 
         private static bool IsExcelFile(string filePath)
@@ -403,21 +432,63 @@ namespace Excel_to_Ecriture
         }
         private void Quitter_Click(object sender, EventArgs e)
         {
+            CleanupExcel();
             bCpta.Close();
             // Close the form
             this.Close();
+
         }
 
-        private void Valider(object sender, EventArgs e)
+
+        private async void Valider(object sender, EventArgs e)
         {
-            if (ConfigurationManager.AppSettings["username"]!= utilisateurTextBox.Text
-                || ConfigurationManager.AppSettings["password"] != txtPassword.Text) { 
-            config.AppSettings.Settings["username"].Value = utilisateurTextBox.Text;
-            config.AppSettings.Settings["password"].Value = txtPassword.Text;
-            config.Save(ConfigurationSaveMode.Modified);
-            ConfigurationManager.RefreshSection("appSettings");
-            }
             
+            // Run the long-running task asynchronously
+            await Task.Run(() => LongRunningTask());
+
+        }
+        private void SetLoadingBarVisible(bool isVisible)
+        {
+            if (loadingBar.InvokeRequired)
+            {
+                loadingBar.Invoke(new System.Action(() => loadingBar.Visible = isVisible));
+            }
+            else
+            {
+                loadingBar.Visible = isVisible;
+            }
+        }
+        private void UpdateLog(string message)
+        {
+            if (logLabel.InvokeRequired)
+            {
+                // If we're not on the UI thread, use Invoke to marshal the call to the UI thread
+                logLabel.Invoke(new System.Action(() => logLabel.Text += message));
+            }
+            else
+            {
+                // If we're already on the UI thread, update the label directly
+                logLabel.Text += message + Environment.NewLine;
+            }
+        }
+
+        private void LongRunningTask()
+        {
+            // Your long-running logic goes here
+            // Simulate a long-running task by sleeping for 5 seconds
+            // System.Threading.Thread.Sleep(5000);
+
+            // Your provided logic
+
+            if (ConfigurationManager.AppSettings["username"] != utilisateurTextBox.Text
+                || ConfigurationManager.AppSettings["password"] != txtPassword.Text)
+            {
+                config.AppSettings.Settings["username"].Value = utilisateurTextBox.Text;
+                config.AppSettings.Settings["password"].Value = txtPassword.Text;
+                config.Save(ConfigurationSaveMode.Modified);
+                ConfigurationManager.RefreshSection("appSettings");
+            }
+
             for (int i = 0; i < columns.Count; i++)
             {
                 indices.Remove(columns[i]);
@@ -440,28 +511,28 @@ namespace Excel_to_Ecriture
             string bCptaSetting = ConfigurationManager.AppSettings["bCpta"];
             string Usernamesetting = ConfigurationManager.AppSettings["username"];
             string passwordsetting = ConfigurationManager.AppSettings["password"];
-
+            SetLoadingBarVisible(true);
             logLabel.Text = "";
-            logLabel.Text += "Ouverture de fichier Excel. \n";
-             try
+            UpdateLog("");
+            UpdateLog("Ouverture de fichier Excel. \n");
+            try
             {
                 // Open the workbook
                 OpenWorkbook(filePath);
-                 // Assuming data is in the first worksheet
+                // Assuming data is in the first worksheet
                 worksheet = workbook.Sheets[1];
                 usedRange = worksheet.UsedRange;
                 rowCount = usedRange.Rows.Count;
-
-                int success = 1;
-                logLabel.Text += "Tentative d'ouverture du fichier comptable. \n";
+ 
+                UpdateLog("Tentative d'ouverture du fichier comptable. \n");
 
                 if (OpenBase(ref bCpta, @bCptaSetting, @Usernamesetting, @passwordsetting))
                 {
                     List<DateTime> uniqueDates = new List<DateTime>();
                     HashSet<string> Journals = new HashSet<string>();
 
-                    logLabel.Text += " Le fichier comptable est ouvert.  \n";
-                    logLabel.Text += "En cours d'importation de " + rowCount + " écritures  \n";
+                    UpdateLog(" Le fichier comptable est ouvert.  \n");
+                    UpdateLog("En cours d'importation de " + rowCount + " écritures  \n");
                     int journalsIndex = GetIndexByValue(indices, "Journal");
                     int dateIndex = GetIndexByValue(indices, "Date de pièce");
                     int pieceIndex = GetIndexByValue(indices, "N° Pièce");
@@ -488,111 +559,255 @@ namespace Excel_to_Ecriture
                             uniqueDates.Add(date);
                         }
                     }
-                   
-                    foreach (string journalItem in Journals)
-                    {
-                        foreach (DateTime date in uniqueDates)
+ 
+                        foreach (string journalItem in Journals)
                         {
-                            IPMEncoder mProcess = bCpta.CreateProcess_Encoder();
-
-
-                            for (int i = 1; i <= rowCount; i++)
+                            foreach (DateTime date in uniqueDates)
                             {
-                                erreurline = i;
-                                float credit = 0;
-                                float debit = 0;
-                                IBOTiers3 tiers = null;
-                                IBOCompteG3 compteg = null;
+                                IPMEncoder mProcess = bCpta.CreateProcess_Encoder();
+                                
+                                bool check = false;
 
-                                string piece = "";
-                                string intitlule = "", reference = "";
-
-                                DateTime rowDate = (DateTime)usedRange.Cells[i, dateIndex].Value;
-                                string journ = usedRange.Cells[i, journalsIndex].Value.ToString().Trim();
-
-                                if (rowDate.Equals(date) && journ == journalItem)
+                                for (int i = 1; i <= rowCount; i++)
                                 {
-                                    piece = usedRange.Cells[i, pieceIndex].Value.ToString().Trim();
+                                    erreurline = i;
+                                    float credit = 0;
+                                    float debit = 0;
+                                    IBOTiers3 tiers = null;
+                                    IBOCompteG3 compteg = null;
 
-                                    compteg = bCpta.FactoryCompteG.ReadNumero(usedRange.Cells[i,comptegIndex].Value.ToString().Trim());
+                                    string piece = "";
+                                    string intitlule = "", reference = "";
 
-                                    if(usedRange.Cells[i, compteTiersIndex].Value != null) { 
-                                       tiers = bCpta.FactoryTiers.ReadNumero(usedRange.Cells[i,   compteTiersIndex].Value.ToString().Trim());
-                                    }
+                                string dateString = usedRange.Cells[i, dateIndex].Value.ToString().Trim();
+                                DateTime rowDate;
 
-                                    intitlule = usedRange.Cells[i, libelleIndex].Value.ToString().Trim();
-                                    reference = usedRange.Cells[i, referenceIndex].Value.ToString().Trim();
-                                    debit = (float)usedRange.Cells[i, debitIndex].Value;
-                                    credit = (float)usedRange.Cells[i, creditIndex].Value;
-
-                                 
-
-                                    mProcess.Journal = bCpta.FactoryJournal.ReadNumero(journ);
-                                    mProcess.Date = rowDate;
-                                    mProcess.EC_Piece = piece;
-                                    mProcess.EC_Intitule = intitlule;
-                                    mProcess.EC_Reference = reference;
-
-                                    IBOEcriture3 ecriture = (IBOEcriture3)mProcess.FactoryEcritureIn.Create();
-
-                                    if (compteg != null) ecriture.CompteG = compteg;
-                                    if (tiers != null)
-                                    {
-                                        ecriture.Tiers = tiers;
-                                        ecriture.EC_Echeance = DateTime.Now;
-                                    }
-                                    if (credit > 0)
-                                    {
-                                        ecriture.EC_Sens = EcritureSensType.EcritureSensTypeCredit;
-                                        ecriture.EC_Montant = credit;
-                                    }
-                                    else if (debit > 0)
-                                    {
-                                        ecriture.EC_Sens = EcritureSensType.EcritureSensTypeDebit;
-                                        ecriture.EC_Montant = debit;
-                                    }
-
-                                    ecriture.WriteDefault();
+                                if (DateTime.TryParse(dateString, out rowDate))
+                                {
+                                    // Successfully parsed the date
+                                    // You can now use rowDate as a DateTime object
                                 }
-                            }
-
-                            if (mProcess.CanProcess)
-                            {
-                                mProcess.Process();
-                            }
-                            else
-                            {
-                                success = 0;
-                                for (int d = 1; d <= mProcess.Errors.Count; d++)
+                                else
                                 {
-                                    IFailInfo iFail = mProcess.Errors[d];
-                                    erreur += iFail.Text;
-                                    MessageBox.Show(iFail.Text + "au journal" + journalItem + ", Date");
+                                    // Handle the case where the date string could not be parsed
+                                    // For example, log an error or set a default value
+                                    MessageBox.Show($"Impossible de convertir au date: {dateString}");
+                                }
+                                     string journ = usedRange.Cells[i, journalsIndex].Value.ToString().Trim();
+
+                                    if (rowDate.Equals(date) && journ == journalItem)
+                                    {
+                                    check = true;
+                                        piece = usedRange.Cells[i, pieceIndex].Value.ToString().Trim();
+
+                                        compteg = bCpta.FactoryCompteG.ReadNumero(usedRange.Cells[i, comptegIndex].Value.ToString().Trim());
+
+                                        if (usedRange.Cells[i, compteTiersIndex].Value != null)
+                                        {
+                                            tiers = bCpta.FactoryTiers.ReadNumero(usedRange.Cells[i, compteTiersIndex].Value.ToString().Trim());
+                                        }
+
+                                        intitlule = usedRange.Cells[i, libelleIndex].Value.ToString().Trim();
+                                        reference = usedRange.Cells[i, referenceIndex].Value.ToString().Trim();
+                                        debit = (float)usedRange.Cells[i, debitIndex].Value;
+                                        credit = (float)usedRange.Cells[i, creditIndex].Value;
+
+
+
+                                        mProcess.Journal = bCpta.FactoryJournal.ReadNumero(journ);
+                                        mProcess.Date = rowDate;
+                                        mProcess.EC_Piece = piece;
+                                        mProcess.EC_Intitule = intitlule;
+                                        mProcess.EC_Reference = reference;
+
+                                        IBOEcriture3 ecriture = (IBOEcriture3)mProcess.FactoryEcritureIn.Create();
+
+                                        if (compteg != null) ecriture.CompteG = compteg;
+                                        if (tiers != null)
+                                        {
+                                            ecriture.Tiers = tiers;
+                                            ecriture.EC_Echeance = DateTime.Now;
+                                        }
+                                        if (credit > 0)
+                                        {
+                                            ecriture.EC_Sens = EcritureSensType.EcritureSensTypeCredit;
+                                            ecriture.EC_Montant = credit;
+                                        }
+                                        else if (debit > 0)
+                                        {
+                                            ecriture.EC_Sens = EcritureSensType.EcritureSensTypeDebit;
+                                            ecriture.EC_Montant = debit;
+                                        }
+
+                                        ecriture.WriteDefault();
+                                    }
+                                }
+
+
+                                if (check == true) { 
+                                    if (!mProcess.CanProcess)
+                                    {
+                                        success = false;
+                                        int day = date.Day;
+                                        int month = date.Month;
+                                   
+                                        string formattedDay = day.ToString("00");
+                                        string formattedMonth = month.ToString("00");
+                                     
+                                        for (int d = 1; d <= mProcess.Errors.Count; d++)
+                                        {
+
+                                            IFailInfo iFail = mProcess.Errors[d];
+                                      
+                                            erreur += iFail.Text;
+
+                                            if (iFail.ErrorCode == 28201)
+                                            {
+
+
+                                                MessageBox.Show("Les écritures générales ne sont pas équilibrées pour le journal " + journalItem + " " + formattedDay + "/" + formattedMonth);
+
+                                                UpdateLog(" \n Les écritures générales ne sont pas équilibrées pour le journal " + journalItem + " " + formattedDay + "/" + formattedMonth + "\n");
+
+                                            }
+
+                                            else
+                                            {
+
+                                                MessageBox.Show(iFail.Text + " , au journal " + journalItem + ", Date " + formattedDay + "/" + formattedMonth);
+
+                                                UpdateLog(iFail.Text + " , au journal " + journalItem + ",  Date " + formattedDay + "/" + formattedMonth + "\n");
+
+                                            }
+
+                                        }
+                                    bCpta.Close();
+                                    CleanupExcel();
+                                    SetLoadingBarVisible(false);
+                                }
+
+                                }
+
+                            }
+                        }
+
+                    
+
+
+                    
+                    if (success == true)
+                    {
+
+                        foreach (string journalItem in Journals)
+                        {
+                            foreach (DateTime date in uniqueDates)
+                            {
+                                IPMEncoder mProcess = bCpta.CreateProcess_Encoder();
+
+
+                                for (int i = 1; i <= rowCount; i++)
+                                {
+                                    erreurline = i;
+                                    float credit = 0;
+                                    float debit = 0;
+                                    IBOTiers3 tiers = null;
+                                    IBOCompteG3 compteg = null;
+
+                                    string piece = "";
+                                    string intitlule = "", reference = "";
+
+                                    DateTime rowDate = (DateTime)usedRange.Cells[i, dateIndex].Value;
+                                    string journ = usedRange.Cells[i, journalsIndex].Value.ToString().Trim();
+
+                                    if (rowDate.Equals(date) && journ == journalItem)
+                                    {
+                                        piece = usedRange.Cells[i, pieceIndex].Value.ToString().Trim();
+
+                                        compteg = bCpta.FactoryCompteG.ReadNumero(usedRange.Cells[i, comptegIndex].Value.ToString().Trim());
+
+                                        if (usedRange.Cells[i, compteTiersIndex].Value != null)
+                                        {
+                                            tiers = bCpta.FactoryTiers.ReadNumero(usedRange.Cells[i, compteTiersIndex].Value.ToString().Trim());
+                                        }
+
+                                        intitlule = usedRange.Cells[i, libelleIndex].Value.ToString().Trim();
+                                        reference = usedRange.Cells[i, referenceIndex].Value.ToString().Trim();
+                                        debit = (float)usedRange.Cells[i, debitIndex].Value;
+                                        credit = (float)usedRange.Cells[i, creditIndex].Value;
+
+
+
+                                        mProcess.Journal = bCpta.FactoryJournal.ReadNumero(journ);
+                                        mProcess.Date = rowDate;
+                                        mProcess.EC_Piece = piece;
+                                        mProcess.EC_Intitule = intitlule;
+                                        mProcess.EC_Reference = reference;
+
+                                        IBOEcriture3 ecriture = (IBOEcriture3)mProcess.FactoryEcritureIn.Create();
+
+                                        if (compteg != null) ecriture.CompteG = compteg;
+                                        if (tiers != null)
+                                        {
+                                            ecriture.Tiers = tiers;
+                                            ecriture.EC_Echeance = DateTime.Now;
+                                        }
+                                        if (credit > 0)
+                                        {
+                                            ecriture.EC_Sens = EcritureSensType.EcritureSensTypeCredit;
+                                            ecriture.EC_Montant = credit;
+                                        }
+                                        else if (debit > 0)
+                                        {
+                                            ecriture.EC_Sens = EcritureSensType.EcritureSensTypeDebit;
+                                            ecriture.EC_Montant = debit;
+                                        }
+
+                                        ecriture.WriteDefault();
+                                    }
+                                }
+
+                                if (mProcess.CanProcess)
+                                {
+                                    mProcess.Process();
+                                }
+                                else
+                                {
+                                    for (int d = 1; d <= mProcess.Errors.Count; d++)
+                                    {
+                                        IFailInfo iFail = mProcess.Errors[d];
+                                        MessageBox.Show(iFail.Text);
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (success == 1)
-                    {
                         MessageBox.Show("La procédure est terminée");
-                        logLabel.Text += "\n L'importation est terminée.\n";
+                        UpdateLog("\n L'importation est terminée.\n");
+                        SetLoadingBarVisible(false);
+
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Erreur : " + ex.Message + ", Ligne : " + erreurline);
-                logLabel.Text += "Erreur : " + ex.Message + ", Ligne: " + erreurline +"\n";
-
-
+                erreurline++;
+                bCpta.Close();
+                CleanupExcel();
+                SetLoadingBarVisible(false);
+                MessageBox.Show("Erreur : " + ex.Message + ", Ligne : " + erreurline );
+                UpdateLog("Erreur : " + ex.Message + ", Ligne: " + erreurline + "\n");
             }
             finally
             {
-                // Ensure cleanup
-                CleanupExcel();
                 bCpta.Close();
+                CleanupExcel();
+                SetLoadingBarVisible(false);
+                
             }
+        }
+            private void Form1_Load(object sender, EventArgs e)
+        {
+
         }
 
         private void OpenWorkbook(string filePath)
@@ -648,8 +863,8 @@ namespace Excel_to_Ecriture
             // Get the selected file name and display it in TextBox
             string fileName = openFileDialog2.FileName;
             baseComptable.Text = fileName;
-            filePath = fileName;
-            config.AppSettings.Settings["bCpta"].Value = filePath;
+            filePath2 = fileName;
+            config.AppSettings.Settings["bCpta"].Value = filePath2;
             config.Save(ConfigurationSaveMode.Modified);
             ConfigurationManager.RefreshSection("appSettings");
         }
